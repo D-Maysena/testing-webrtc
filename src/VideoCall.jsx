@@ -86,9 +86,10 @@ export default function VideoCall({ roomId }) {
 
   const startCall = async () => {
     if (!pc) return;
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    socket.emit("offer", offer, roomId);
+   const offer = await pcRef.current.createOffer();
+await pcRef.current.setLocalDescription(offer);
+socket.emit("offer", { targetId: remoteId, offer: { type: offer.type, sdp: offer.sdp } });
+
   };
 
   return (
