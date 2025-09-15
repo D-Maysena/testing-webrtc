@@ -48,15 +48,19 @@ export default function VideoCall({ roomId }) {
           socket.emit("answer", answer, roomId);
         });
 
-        socket.on("answer", async (answer) => {
-          await peerConnection.setRemoteDescription(
-            new RTCSessionDescription(answer)
-          );
+        socket.on("answer", async ({ answer }) => {
+          if (!answer.type || !answer.sdp) {
+            console.error("Answer mal formado:", answer);
+            return;
+          }
+          await pcRef.current.setRemoteDescription(answer);
         });
 
         socket.on("ice-candidate", async (candidate) => {
           try {
-            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+            await peerConnection.addIceCandidate(
+              new RTCIceCandidate(candidate)
+            );
           } catch (err) {
             console.error("Error agregando ICE", err);
           }
@@ -86,17 +90,30 @@ export default function VideoCall({ roomId }) {
 
   const startCall = async () => {
     if (!pc) return;
-   const offer = await pcRef.current.createOffer();
-await pcRef.current.setLocalDescription(offer);
-socket.emit("offer", { targetId: remoteId, offer: { type: offer.type, sdp: offer.sdp } });
-
+    const offer = await pcRef.current.createOffer();
+    await pcRef.current.setLocalDescription(offer);
+    socket.emit("offer", {
+      targetId: remoteId,
+      offer: { type: offer.type, sdp: offer.sdp },
+    });
   };
 
   return (
     <div>
       <h2>Llamada en sala: {roomId}</h2>
-      <video ref={localVideoRef} autoPlay playsInline muted style={{ width: "300px" }} />
-      <video ref={remoteVideoRef} autoPlay playsInline style={{ width: "300px" }} />
+      <video
+        ref={localVideoRef}
+        autoPlay
+        playsInline
+        muted
+        style={{ width: "300px" }}
+      />
+      <video
+        ref={remoteVideoRef}
+        autoPlay
+        playsInline
+        style={{ width: "300px" }}
+      />
       <br />
       <button onClick={startCall}>📞 Iniciar llamada</button>
     </div>
