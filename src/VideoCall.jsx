@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from "react";
 import io from "socket.io-client";
 
+// Conexión a tu servidor
 const socket = io("https://sinaes.up.railway.app");
 
 export default function VideoCall({ roomId }) {
@@ -8,10 +9,12 @@ export default function VideoCall({ roomId }) {
   const remoteVideoRef = useRef(null);
   const pcRef = useRef(null);
   const localStreamRef = useRef(null);
+  const pendingCandidatesRef = useRef([]);
 
   useEffect(() => {
     const init = async () => {
       try {
+        // 1️⃣ Pedir permisos de cámara/micrófono
         const stream = await navigator.mediaDevices.getUserMedia({
           video: true,
           audio: true,
@@ -19,55 +22,81 @@ export default function VideoCall({ roomId }) {
         localVideoRef.current.srcObject = stream;
         localStreamRef.current = stream;
 
+        // 2️⃣ Crear RTCPeerConnection
         const pc = new RTCPeerConnection({
           iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
         });
         pcRef.current = pc;
 
+        // 3️⃣ Agregar tracks locales
         stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
+        // 4️⃣ Cuando llegue track remoto
         pc.ontrack = (event) => {
           remoteVideoRef.current.srcObject = event.streams[0];
         };
 
+        // 5️⃣ Manejar ICE candidates locales
         pc.onicecandidate = (event) => {
           if (event.candidate) {
-            socket.emit("ice-candidate", {
-              roomId,
-              candidate: event.candidate,
-            });
+            socket.emit("ice-candidate", { roomId, candidate: event.candidate });
           }
         };
 
-        // Unirse a la sala
+        // 6️⃣ Unirse a la sala
         socket.emit("join-room", { roomId });
 
-        // Manejar offer recibida
+        // 7️⃣ Recibir offer
         socket.on("offer", async ({ offer }) => {
+          const pc = pcRef.current;
           await pc.setRemoteDescription(new RTCSessionDescription(offer));
+
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
           socket.emit("answer", { roomId, answer });
+
+          // Procesar ICE candidates pendientes
+          for (const c of pendingCandidatesRef.current) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(c));
+            } catch (err) {
+              console.error("Error agregando ICE candidate pendiente:", err);
+            }
+          }
+          pendingCandidatesRef.current = [];
         });
 
-        // Manejar answer recibida
+        // 8️⃣ Recibir answer
         socket.on("answer", async ({ answer }) => {
+          const pc = pcRef.current;
           if (answer && answer.type && answer.sdp) {
             await pc.setRemoteDescription(new RTCSessionDescription(answer));
+
+            // Procesar ICE candidates pendientes
+            for (const c of pendingCandidatesRef.current) {
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(c));
+              } catch (err) {
+                console.error("Error agregando ICE candidate pendiente:", err);
+              }
+            }
+            pendingCandidatesRef.current = [];
           }
         });
 
-        // Manejar ICE candidates remotos
+        // 9️⃣ Recibir ICE candidates remotos
         socket.on("ice-candidate", async ({ candidate }) => {
-          try {
-            if (candidate && candidate.candidate) {
-              // WebRTC espera un objeto con .candidate
-              await pcRef.current.addIceCandidate(
-                new RTCIceCandidate(candidate)
-              );
+          if (!candidate || !candidate.candidate) return;
+          const pc = pcRef.current;
+          if (pc && pc.remoteDescription) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            } catch (err) {
+              console.error("Error agregando ICE candidate:", err);
             }
-          } catch (err) {
-            console.error("Error agregando ICE candidate:", err);
+          } else {
+            // Guardar para después
+            pendingCandidatesRef.current.push(candidate);
           }
         });
       } catch (err) {
@@ -79,22 +108,25 @@ export default function VideoCall({ roomId }) {
     init();
 
     return () => {
+      // Limpiar al salir
       if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach((t) => t.stop());
+        localStreamRef.current.getTracks().forEach((track) => track.stop());
       }
-      if (pcRef.current) pcRef.current.close();
+      if (pcRef.current) {
+        pcRef.current.close();
+      }
       socket.off();
     };
   }, [roomId]);
 
+  // Iniciar llamada: crear offer
   const startCall = async () => {
-    if (!pcRef.current) return;
-    const offer = await pcRef.current.createOffer();
-    await pcRef.current.setLocalDescription(offer);
-    socket.emit("offer", {
-      roomId,
-      offer: { type: offer.type, sdp: offer.sdp },
-    });
+    const pc = pcRef.current;
+    if (!pc) return;
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    socket.emit("offer", { roomId, offer });
   };
 
   return (
