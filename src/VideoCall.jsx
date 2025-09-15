@@ -32,7 +32,10 @@ export default function VideoCall({ roomId }) {
 
         pc.onicecandidate = (event) => {
           if (event.candidate) {
-            socket.emit("ice-candidate", { roomId, candidate: event.candidate });
+            socket.emit("ice-candidate", {
+              roomId,
+              candidate: event.candidate,
+            });
           }
         };
 
@@ -56,12 +59,15 @@ export default function VideoCall({ roomId }) {
 
         // Manejar ICE candidates remotos
         socket.on("ice-candidate", async ({ candidate }) => {
-          if (candidate) {
-            try {
-              await pc.addIceCandidate(new RTCIceCandidate(candidate));
-            } catch (err) {
-              console.error("Error agregando ICE candidate:", err);
+          try {
+            if (candidate && candidate.candidate) {
+              // WebRTC espera un objeto con .candidate
+              await pcRef.current.addIceCandidate(
+                new RTCIceCandidate(candidate)
+              );
             }
+          } catch (err) {
+            console.error("Error agregando ICE candidate:", err);
           }
         });
       } catch (err) {
@@ -85,7 +91,10 @@ export default function VideoCall({ roomId }) {
     if (!pcRef.current) return;
     const offer = await pcRef.current.createOffer();
     await pcRef.current.setLocalDescription(offer);
-    socket.emit("offer", { roomId, offer: { type: offer.type, sdp: offer.sdp } });
+    socket.emit("offer", {
+      roomId,
+      offer: { type: offer.type, sdp: offer.sdp },
+    });
   };
 
   return (
