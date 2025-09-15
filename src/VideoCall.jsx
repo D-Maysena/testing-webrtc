@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import io from "socket.io-client";
 
-const socket = io("http://localhost:8080");
+const socket = io("https://sinaes.up.railway.app");
 
 export default function VideoCall({ roomId }) {
   const localVideoRef = useRef(null);
