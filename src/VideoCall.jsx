@@ -38,12 +38,15 @@ export default function VideoCall({ roomId }) {
         // 5️⃣ Manejar ICE candidates locales
         pc.onicecandidate = (event) => {
           if (event.candidate) {
-          socket.emit("ice-candidate", { roomId, candidate });
+            socket.emit("ice-candidate", {
+              roomId,
+              candidate: event.candidate,
+            });
           }
         };
 
         // 6️⃣ Unirse a la sala
-       socket.emit("join-room", { roomId });
+        socket.emit("join-room", { roomId });
 
         // 7️⃣ Manejar offer recibida
         socket.on("offer", async ({ offer }) => {
