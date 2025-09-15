@@ -1,76 +1,73 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import io from "socket.io-client";
 
-const socket = io("https://sinaes.up.railway.app");
+// Conéctate a tu servidor (asegúrate de HTTPS en producción)
+const socket = io("https://sinaes.up.railway.app"); // ej: "https://sinaes.up.railway.app"
 
 export default function VideoCall({ roomId }) {
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
-  const [pc, setPc] = useState(null);
-  const [localStream, setLocalStream] = useState(null);
+  const pcRef = useRef(null);
+  const localStreamRef = useRef(null);
 
   useEffect(() => {
     const init = async () => {
       try {
-        // ✅ Pedir permisos de cámara/micrófono
+        // 1️⃣ Pedir permisos de cámara y micrófono
         const stream = await navigator.mediaDevices.getUserMedia({
           video: true,
           audio: true,
         });
-
-        setLocalStream(stream);
         localVideoRef.current.srcObject = stream;
+        localStreamRef.current = stream;
 
-        const peerConnection = new RTCPeerConnection();
-
-        // ✅ Agregar tracks locales a la conexión
-        stream.getTracks().forEach((track) => {
-          peerConnection.addTrack(track, stream);
+        // 2️⃣ Crear RTCPeerConnection
+        const pc = new RTCPeerConnection({
+          iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
         });
+        pcRef.current = pc;
 
-        // ✅ Cuando llegue un track remoto, mostrarlo
-        peerConnection.ontrack = (event) => {
+        // 3️⃣ Agregar tracks locales a la conexión
+        stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+
+        // 4️⃣ Cuando llegue un track remoto, mostrarlo
+        pc.ontrack = (event) => {
           remoteVideoRef.current.srcObject = event.streams[0];
         };
 
-        setPc(peerConnection);
-
-        // ✅ Unirse a la sala
-        socket.emit("join-room", roomId);
-
-        // ✅ Mensajes de señalización
-        socket.on("offer", async (offer) => {
-          await peerConnection.setRemoteDescription(
-            new RTCSessionDescription(offer)
-          );
-          const answer = await peerConnection.createAnswer();
-          await peerConnection.setLocalDescription(answer);
-          socket.emit("answer", answer, roomId);
-        });
-
-        socket.on("answer", async ({ answer }) => {
-          if (!answer.type || !answer.sdp) {
-            console.error("Answer mal formado:", answer);
-            return;
-          }
-          await pcRef.current.setRemoteDescription(answer);
-        });
-
-        socket.on("ice-candidate", async (candidate) => {
-          try {
-            await peerConnection.addIceCandidate(
-              new RTCIceCandidate(candidate)
-            );
-          } catch (err) {
-            console.error("Error agregando ICE", err);
-          }
-        });
-
-        peerConnection.onicecandidate = (event) => {
+        // 5️⃣ Manejar ICE candidates locales
+        pc.onicecandidate = (event) => {
           if (event.candidate) {
-            socket.emit("ice-candidate", event.candidate, roomId);
+            socket.emit("ice-candidate", { roomId, candidate: event.candidate });
           }
         };
+
+        // 6️⃣ Unirse a la sala
+        socket.emit("join-room", roomId);
+
+        // 7️⃣ Manejar offer recibida
+        socket.on("offer", async ({ offer }) => {
+          await pc.setRemoteDescription(offer);
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          socket.emit("answer", { roomId, answer });
+        });
+
+        // 8️⃣ Manejar answer recibida
+        socket.on("answer", async ({ answer }) => {
+          if (answer && answer.type && answer.sdp) {
+            await pc.setRemoteDescription(answer);
+          }
+        });
+
+        // 9️⃣ Manejar ICE candidates remotos
+        socket.on("ice-candidate", async ({ candidate }) => {
+          try {
+            await pc.addIceCandidate(candidate);
+          } catch (err) {
+            console.error("Error agregando ICE candidate:", err);
+          }
+        });
       } catch (err) {
         console.error("❌ Error iniciando cámara/micrófono:", err);
         alert("No se pudo acceder a cámara o micrófono. Revisa permisos.");
@@ -80,42 +77,46 @@ export default function VideoCall({ roomId }) {
     init();
 
     return () => {
-      // ✅ Limpiar al salir
-      if (localStream) {
-        localStream.getTracks().forEach((track) => track.stop());
+      // Limpiar al salir
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((track) => track.stop());
+      }
+      if (pcRef.current) {
+        pcRef.current.close();
       }
       socket.off();
     };
   }, [roomId]);
 
+  // Iniciar llamada: crear offer y enviarla a la sala
   const startCall = async () => {
-    if (!pc) return;
+    if (!pcRef.current) return;
     const offer = await pcRef.current.createOffer();
     await pcRef.current.setLocalDescription(offer);
-    socket.emit("offer", {
-      targetId: remoteId,
-      offer: { type: offer.type, sdp: offer.sdp },
-    });
+    socket.emit("offer", { roomId, offer });
   };
 
   return (
-    <div>
-      <h2>Llamada en sala: {roomId}</h2>
-      <video
-        ref={localVideoRef}
-        autoPlay
-        playsInline
-        muted
-        style={{ width: "300px" }}
-      />
-      <video
-        ref={remoteVideoRef}
-        autoPlay
-        playsInline
-        style={{ width: "300px" }}
-      />
-      <br />
-      <button onClick={startCall}>📞 Iniciar llamada</button>
+    <div style={{ textAlign: "center", marginTop: "20px" }}>
+      <h2>Videollamada en sala: {roomId}</h2>
+      <div style={{ display: "flex", justifyContent: "center", gap: "20px" }}>
+        <video
+          ref={localVideoRef}
+          autoPlay
+          playsInline
+          muted
+          style={{ width: "300px", border: "1px solid #ccc" }}
+        />
+        <video
+          ref={remoteVideoRef}
+          autoPlay
+          playsInline
+          style={{ width: "300px", border: "1px solid #ccc" }}
+        />
+      </div>
+      <button onClick={startCall} style={{ marginTop: "20px" }}>
+        📞 Iniciar llamada
+      </button>
     </div>
   );
 }

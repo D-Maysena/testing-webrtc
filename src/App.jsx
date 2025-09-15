@@ -10,7 +10,7 @@ function App() {
   };
 
   return (
-    <div style={{ textAlign: "center" }}>
+    <div style={{ textAlign: "center", marginTop: "50px" }}>
       {!joined ? (
         <div>
           <h2>Unirse a la videollamada</h2>
@@ -20,7 +20,9 @@ function App() {
             value={roomId}
             onChange={(e) => setRoomId(e.target.value)}
           />
-          <button onClick={joinRoom}>Unirse</button>
+          <button onClick={joinRoom} style={{ marginLeft: "10px" }}>
+            Unirse
+          </button>
         </div>
       ) : (
         <VideoCall roomId={roomId} />
