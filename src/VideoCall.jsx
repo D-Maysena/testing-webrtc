@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from "react";
 import io from "socket.io-client";
 
+// Conexión a tu servidor
 const socket = io("https://sinaes.up.railway.app");
 
 export default function VideoCall({ roomId }) {
@@ -8,19 +9,22 @@ export default function VideoCall({ roomId }) {
   const remoteVideoRef = useRef(null);
   const pcRef = useRef(null);
   const localStreamRef = useRef(null);
-  const targetRef = useRef(null);
+  const pendingCandidatesRef = useRef([]);
 
   useEffect(() => {
     const init = async () => {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true,
-      });
-      localVideoRef.current.srcObject = stream;
-      localStreamRef.current = stream;
+      try {
+        // 1️⃣ Pedir permisos de cámara/micrófono
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: true,
+        });
+        localVideoRef.current.srcObject = stream;
+        localStreamRef.current = stream;
 
-      const pc = new RTCPeerConnection({
-        iceServers: [
+        // 2️⃣ Crear RTCPeerConnection
+        const pc = new RTCPeerConnection({
+         iceServers: [
           {
             urls: "stun:stun.relay.metered.ca:80",
           },
@@ -45,106 +49,131 @@ export default function VideoCall({ roomId }) {
             credential: "ymXWPsHIeRXxeV8J",
           },
         ],
-      });
-      pcRef.current = pc;
+        });
+        pcRef.current = pc;
 
-      stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+        // 3️⃣ Agregar tracks locales
+        stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
-      pc.ontrack = (e) => {
-        remoteVideoRef.current.srcObject = e.streams[0];
-      };
+        // 4️⃣ Cuando llegue track remoto
+        pc.ontrack = (event) => {
+          remoteVideoRef.current.srcObject = event.streams[0];
+        };
 
-      pc.onicecandidate = (e) => {
-        if (e.candidate && targetRef.current) {
-          socket.emit("ice-candidate", {
-            roomId,
-            candidate: e.candidate,
-            to: targetRef.current,
-          });
-        }
-      };
+        // 5️⃣ Manejar ICE candidates locales
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            socket.emit("ice-candidate", { roomId, candidate: event.candidate });
+          }
+        };
 
-      // 1️⃣ Unirse a la sala
-      socket.emit("join-room", { roomId });
+        // 6️⃣ Unirse a la sala
+        socket.emit("join-room", { roomId });
 
-      // 2️⃣ Recibir lista de usuarios en la sala
-      socket.on("all-users", async (users) => {
-        if (users.length > 0) {
-          targetRef.current = users[0];
-          console.log("Conectando con", targetRef.current);
+        // 7️⃣ Recibir offer
+        socket.on("offer", async ({ offer }) => {
+          const pc = pcRef.current;
+          await pc.setRemoteDescription(new RTCSessionDescription(offer));
 
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          socket.emit("offer", { roomId, offer, to: targetRef.current });
-        }
-      });
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          socket.emit("answer", { roomId, answer });
 
-      // 3️⃣ Cuando alguien nuevo se une
-      socket.on("user-joined", (userId) => {
-        console.log("Nuevo usuario:", userId);
-        targetRef.current = userId;
-      });
+          // Procesar ICE candidates pendientes
+          for (const c of pendingCandidatesRef.current) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(c));
+            } catch (err) {
+              console.error("Error agregando ICE candidate pendiente:", err);
+            }
+          }
+          pendingCandidatesRef.current = [];
+        });
 
-      // 4️⃣ Recibir oferta
-      socket.on("offer", async ({ from, offer }) => {
-        targetRef.current = from;
-        if (pc.signalingState !== "stable") {
-          console.warn("Rechazando oferta porque ya hay conexión activa");
-          return;
-        }
-        await pc.setRemoteDescription(new RTCSessionDescription(offer));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        socket.emit("answer", { roomId, answer, to: from });
-      });
+        // 8️⃣ Recibir answer
+        socket.on("answer", async ({ answer }) => {
+          const pc = pcRef.current;
+          if (answer && answer.type && answer.sdp) {
+            await pc.setRemoteDescription(new RTCSessionDescription(answer));
 
-      // 5️⃣ Recibir respuesta
-      socket.on("answer", async ({ answer }) => {
-        if (pc.signalingState === "stable") {
-          console.warn("Ya hay conexión estable. Ignorando answer duplicada");
-          return;
-        }
-        await pc.setRemoteDescription(new RTCSessionDescription(answer));
-      });
+            // Procesar ICE candidates pendientes
+            for (const c of pendingCandidatesRef.current) {
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(c));
+              } catch (err) {
+                console.error("Error agregando ICE candidate pendiente:", err);
+              }
+            }
+            pendingCandidatesRef.current = [];
+          }
+        });
 
-      // 6️⃣ Recibir ICE candidates
-      socket.on("ice-candidate", async ({ candidate }) => {
-        try {
-          await pc.addIceCandidate(new RTCIceCandidate(candidate));
-        } catch (err) {
-          console.error("Error agregando ICE candidate:", err);
-        }
-      });
+        // 9️⃣ Recibir ICE candidates remotos
+        socket.on("ice-candidate", async ({ candidate }) => {
+          if (!candidate || !candidate.candidate) return;
+          const pc = pcRef.current;
+          if (pc && pc.remoteDescription) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            } catch (err) {
+              console.error("Error agregando ICE candidate:", err);
+            }
+          } else {
+            // Guardar para después
+            pendingCandidatesRef.current.push(candidate);
+          }
+        });
+      } catch (err) {
+        console.error("❌ Error iniciando cámara/micrófono:", err);
+        alert("No se pudo acceder a cámara o micrófono. Revisa permisos.");
+      }
     };
 
     init();
 
     return () => {
+      // Limpiar al salir
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((track) => track.stop());
+      }
+      if (pcRef.current) {
+        pcRef.current.close();
+      }
       socket.off();
-      if (pcRef.current) pcRef.current.close();
-      if (localStreamRef.current)
-        localStreamRef.current.getTracks().forEach((t) => t.stop());
     };
   }, [roomId]);
 
+  // Iniciar llamada: crear offer
+  const startCall = async () => {
+    const pc = pcRef.current;
+    if (!pc) return;
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    socket.emit("offer", { roomId, offer });
+  };
+
   return (
-    <div style={{ textAlign: "center", marginTop: 20 }}>
-      <h2>Videollamada sala {roomId}</h2>
-      <div style={{ display: "flex", gap: 20, justifyContent: "center" }}>
+    <div style={{ textAlign: "center", marginTop: "20px" }}>
+      <h2>Videollamada en sala: {roomId}</h2>
+      <div style={{ display: "flex", justifyContent: "center", gap: "20px" }}>
         <video
           ref={localVideoRef}
           autoPlay
-          muted
           playsInline
-          style={{ width: 300 }}
+          muted
+          style={{ width: "300px", border: "1px solid #ccc" }}
         />
         <video
           ref={remoteVideoRef}
           autoPlay
           playsInline
-          style={{ width: 300 }}
+          style={{ width: "300px", border: "1px solid #ccc" }}
         />
       </div>
+      <button onClick={startCall} style={{ marginTop: "20px" }}>
+        📞 Iniciar llamada
+      </button>
     </div>
   );
 }
