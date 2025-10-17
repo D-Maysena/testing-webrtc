@@ -2,7 +2,11 @@ import React, { useEffect, useRef } from "react";
 import io from "socket.io-client";
 
 // Conexión a tu servidor
-const socket = io("https://sinaes.up.railway.app");
+const socket = io("https://sinaes.up.railway.app", {
+  transports: ["websocket"], // 👈 Fuerza WebSocket, evita polling
+  withCredentials: true,
+  reconnectionAttempts: 5,
+});
 
 export default function VideoCall({ roomId }) {
   const localVideoRef = useRef(null);
@@ -23,9 +27,22 @@ export default function VideoCall({ roomId }) {
         localStreamRef.current = stream;
 
         // 2️⃣ Crear RTCPeerConnection
-        const pc = new RTCPeerConnection({
-          iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-        });
+      const pc = new RTCPeerConnection({
+  iceServers: [
+    {
+      urls: [
+        "stun:stun.l.google.com:19302",
+        "stun:stun1.l.google.com:19302"
+      ]
+    },
+    {
+      urls: "turn:relay1.expressturn.com:3478",
+      username: "ef-example",
+      credential: "ef-password"
+    }
+  ]
+});
+
         pcRef.current = pc;
 
         // 3️⃣ Agregar tracks locales
