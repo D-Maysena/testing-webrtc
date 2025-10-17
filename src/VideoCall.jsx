@@ -25,9 +25,17 @@ export default function VideoCall({ roomId }) {
         localStreamRef.current = stream;
 
         // 2️⃣ Crear conexión RTCPeerConnection
-        const pc = new RTCPeerConnection({
-          iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-        });
+       const pc = new RTCPeerConnection({
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    {
+      urls: "turn:relay1.expressturn.com:3478",
+      username: "efree",
+      credential: "efree"
+    }
+  ]
+});
+
         pcRef.current = pc;
 
         // 3️⃣ Agregar pistas locales
