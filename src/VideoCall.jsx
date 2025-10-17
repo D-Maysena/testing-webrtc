@@ -12,17 +12,37 @@ export default function VideoCall({ roomId }) {
 
   useEffect(() => {
     const init = async () => {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: true,
+      });
       localVideoRef.current.srcObject = stream;
       localStreamRef.current = stream;
 
       const pc = new RTCPeerConnection({
         iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
           {
-            urls: "turn:relay1.expressturn.com:3478",
-            username: "efunuser",
-            credential: "efunpass",
+            urls: "stun:stun.relay.metered.ca:80",
+          },
+          {
+            urls: "turn:global.relay.metered.ca:80",
+            username: "6fe6e5a89fa11f91a4ac00e3",
+            credential: "ymXWPsHIeRXxeV8J",
+          },
+          {
+            urls: "turn:global.relay.metered.ca:80?transport=tcp",
+            username: "6fe6e5a89fa11f91a4ac00e3",
+            credential: "ymXWPsHIeRXxeV8J",
+          },
+          {
+            urls: "turn:global.relay.metered.ca:443",
+            username: "6fe6e5a89fa11f91a4ac00e3",
+            credential: "ymXWPsHIeRXxeV8J",
+          },
+          {
+            urls: "turns:global.relay.metered.ca:443?transport=tcp",
+            username: "6fe6e5a89fa11f91a4ac00e3",
+            credential: "ymXWPsHIeRXxeV8J",
           },
         ],
       });
@@ -111,8 +131,19 @@ export default function VideoCall({ roomId }) {
     <div style={{ textAlign: "center", marginTop: 20 }}>
       <h2>Videollamada sala {roomId}</h2>
       <div style={{ display: "flex", gap: 20, justifyContent: "center" }}>
-        <video ref={localVideoRef} autoPlay muted playsInline style={{ width: 300 }} />
-        <video ref={remoteVideoRef} autoPlay playsInline style={{ width: 300 }} />
+        <video
+          ref={localVideoRef}
+          autoPlay
+          muted
+          playsInline
+          style={{ width: 300 }}
+        />
+        <video
+          ref={remoteVideoRef}
+          autoPlay
+          playsInline
+          style={{ width: 300 }}
+        />
       </div>
     </div>
   );
