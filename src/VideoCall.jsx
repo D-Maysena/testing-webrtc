@@ -1,14 +1,10 @@
-import React, { useEffect, useRef, useState } from "react";
-import { io } from "socket.io-client";
+import React, { useEffect, useRef } from "react";
+import io from "socket.io-client";
 
-const socket = io("https://sinaes.up.railway.app", {
-  transports: ["websocket"],
-  withCredentials: true,
-  reconnectionAttempts: 5,
-});
+// Conexión a tu servidor
+const socket = io("https://sinaes.up.railway.app");
 
 export default function VideoCall({ roomId }) {
-  const [isCaller, setIsCaller] = useState(false);
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const pcRef = useRef(null);
@@ -18,6 +14,7 @@ export default function VideoCall({ roomId }) {
   useEffect(() => {
     const init = async () => {
       try {
+        // 1️⃣ Pedir permisos de cámara/micrófono
         const stream = await navigator.mediaDevices.getUserMedia({
           video: true,
           audio: true,
@@ -25,98 +22,108 @@ export default function VideoCall({ roomId }) {
         localVideoRef.current.srcObject = stream;
         localStreamRef.current = stream;
 
+        // 2️⃣ Crear RTCPeerConnection
         const pc = new RTCPeerConnection({
-          iceServers: [
-            {
-              urls: [
-                "stun:stun.l.google.com:19302",
-                "stun:stun1.l.google.com:19302",
-              ],
-            },
-            {
-              urls: "turn:openrelay.metered.ca:80",
-              username: "openrelayproject",
-              credential: "openrelayproject",
-            },
-          ],
+          iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
         });
-
         pcRef.current = pc;
+
+        // 3️⃣ Agregar tracks locales
         stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
+        // 4️⃣ Cuando llegue track remoto
         pc.ontrack = (event) => {
           remoteVideoRef.current.srcObject = event.streams[0];
         };
 
+        // 5️⃣ Manejar ICE candidates locales
         pc.onicecandidate = (event) => {
           if (event.candidate) {
             socket.emit("ice-candidate", { roomId, candidate: event.candidate });
           }
         };
 
+        // 6️⃣ Unirse a la sala
         socket.emit("join-room", { roomId });
 
-        // Recibir si alguien más ya está en la sala
-        socket.on("user-joined", (id) => {
-          console.log("Otro usuario se unió:", id);
-          // Si soy el primero, iniciar la oferta
-          setIsCaller(true);
-        });
-
-        // Recibir offer
+        // 7️⃣ Recibir offer
         socket.on("offer", async ({ offer }) => {
-          console.log("📩 Recibí offer");
           const pc = pcRef.current;
-          if (pc.signalingState !== "stable") return;
           await pc.setRemoteDescription(new RTCSessionDescription(offer));
+
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
           socket.emit("answer", { roomId, answer });
+
+          // Procesar ICE candidates pendientes
+          for (const c of pendingCandidatesRef.current) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(c));
+            } catch (err) {
+              console.error("Error agregando ICE candidate pendiente:", err);
+            }
+          }
+          pendingCandidatesRef.current = [];
         });
 
-        // Recibir answer
+        // 8️⃣ Recibir answer
         socket.on("answer", async ({ answer }) => {
-          console.log("📩 Recibí answer");
           const pc = pcRef.current;
-          if (pc.signalingState === "have-local-offer") {
+          if (answer && answer.type && answer.sdp) {
             await pc.setRemoteDescription(new RTCSessionDescription(answer));
-          } else {
-            console.warn("⚠️ Se ignoró answer en estado:", pc.signalingState);
+
+            // Procesar ICE candidates pendientes
+            for (const c of pendingCandidatesRef.current) {
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(c));
+              } catch (err) {
+                console.error("Error agregando ICE candidate pendiente:", err);
+              }
+            }
+            pendingCandidatesRef.current = [];
           }
         });
 
-        // Recibir ICE candidates remotos
+        // 9️⃣ Recibir ICE candidates remotos
         socket.on("ice-candidate", async ({ candidate }) => {
-          if (!candidate) return;
-          try {
-            await pc.addIceCandidate(new RTCIceCandidate(candidate));
-          } catch (err) {
-            console.error("Error agregando ICE:", err);
+          if (!candidate || !candidate.candidate) return;
+          const pc = pcRef.current;
+          if (pc && pc.remoteDescription) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            } catch (err) {
+              console.error("Error agregando ICE candidate:", err);
+            }
+          } else {
+            // Guardar para después
+            pendingCandidatesRef.current.push(candidate);
           }
         });
       } catch (err) {
         console.error("❌ Error iniciando cámara/micrófono:", err);
-        alert("No se pudo acceder a cámara o micrófono.");
+        alert("No se pudo acceder a cámara o micrófono. Revisa permisos.");
       }
     };
 
     init();
 
     return () => {
-      if (localStreamRef.current)
-        localStreamRef.current.getTracks().forEach((t) => t.stop());
-      if (pcRef.current) pcRef.current.close();
+      // Limpiar al salir
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((track) => track.stop());
+      }
+      if (pcRef.current) {
+        pcRef.current.close();
+      }
       socket.off();
     };
   }, [roomId]);
 
+  // Iniciar llamada: crear offer
   const startCall = async () => {
-    if (!isCaller) {
-      alert("Espera a que el otro usuario se una para iniciar la llamada.");
-      return;
-    }
-
     const pc = pcRef.current;
+    if (!pc) return;
+
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     socket.emit("offer", { roomId, offer });
